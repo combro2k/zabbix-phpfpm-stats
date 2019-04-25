@@ -150,9 +150,18 @@ class ZabbixPHPFPM():
       )
 
       parser.add_argument(
+        "--dry-run",
+        action = "store_true",
+        dest = "dryrun",
+        default = False,
+        help = "Do not send data to zabbix"
+      )
+
+      parser.add_argument(
         "--discover",
         action = "store_true",
-        default = True,
+        dest = "discover",
+        default = False,
         help = "Discover pools",
       )
       parser.add_argument(
@@ -261,6 +270,11 @@ class ZabbixPHPFPM():
 
       try:
         self.logger.debug('Payload:\n%s' % (payload))
+
+        if self.opts.dryrun:
+          ret = result = 0
+
+          return 1
 
         p = Popen(sender_command, stdout = PIPE, stdin = PIPE, stderr = PIPE)
         out, err = p.communicate(input=payload)
