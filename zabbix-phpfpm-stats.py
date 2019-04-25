@@ -1,7 +1,9 @@
 #!/usr/bin/env python2
 
-import sys, socket, struct, stat, os, json
+import sys, socket, struct, stat, os, json, glob
 import logging, logging.handlers
+
+import ConfigParser
 
 from subprocess import Popen, PIPE
 from argparse import ArgumentParser as Parser
@@ -138,6 +140,12 @@ class FCGIStatusClient():
 class ZabbixPHPFPM():
 
   _opts = None
+
+  searchable_paths = [
+    '/etc/php*/fpm/php-fpm.d/*.conf',
+    '/etc/php5.6/fpm/pool.d/*.conf',
+    '/etc/php/*/fpm/pool/*.conf',
+  ]
 
   @property
   def opts(self):
@@ -330,21 +338,23 @@ class ZabbixPHPFPM():
 
   def autodiscover(self):
     data = {
-        'data': [],
+      'data': [],
     }
 
-    try:
-      command = ['sh', '-c', 'ps ax |grep \'php-fpm: pool \' |grep -v grep|awk \'{print $NF}\' |sort -u']
-      p = Popen(command, stdout=PIPE, stdin=PIPE, stderr=PIPE)
-      out, err = p.communicate()
-      ret = p.wait()
-      for value in out.strip('\n').splitlines(False):
-        data.get('data').append({
-            "{#POOLNAME}": value,
-        })
+    for s in self.searchable_paths:
+      config = ConfigParser.ConfigParser()
 
-    except Exception as e:
-      self.logger.error(e)
+      configs = glob.glob(s)
+
+      for c in configs:
+        config.read(c)
+
+      for section in config.sections():
+        socket = config.get(section, 'listen')
+        data.get('data').append({
+            "{#POOLNAME}": section,
+            "{#SOCKET}": socket,
+        })
 
     return data
 
@@ -364,6 +374,9 @@ class ZabbixPHPFPM():
     if self.opts.discover:
       data = self.autodiscover()
       print(json.dumps(data))
+
+      #data = self.autodiscover()
+      #print(json.dumps(data))
 
     else:
       try:
