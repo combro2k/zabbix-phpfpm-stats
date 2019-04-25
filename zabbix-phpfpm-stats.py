@@ -342,7 +342,7 @@ class ZabbixPHPFPM():
     }
 
     for s in self.searchable_paths:
-      config = ConfigParser.ConfigParser()
+      config = ConfigParser.SafeConfigParser(allow_no_value=True)
 
       configs = glob.glob(s)
 
@@ -350,11 +350,15 @@ class ZabbixPHPFPM():
         config.read(c)
 
       for section in config.sections():
-        socket = config.get(section, 'listen')
-        data.get('data').append({
-            "{#POOLNAME}": section,
-            "{#SOCKET}": socket,
-        })
+        try:
+          status_path = config.get(section, 'pm.status_path')
+
+          data.get('data').append({
+              "{#POOLNAME}": section,
+              "{#SOCKET}": config.get(section, 'listen'),
+          })
+        except ConfigParser.NoOptionError as e:
+          continue
 
     return data
 
