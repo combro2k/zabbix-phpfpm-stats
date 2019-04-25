@@ -53,9 +53,9 @@ class FCGIStatusClient():
         self.socket.connect(self.socket_path[len('unix://'):])
       else:
         sys.exit(1)
-    except:
-      self.logger.error(sys.exc_info()[1])
-      sys.exit(1)
+    except Exception as e:
+      print("Can not connect to socket: %s" % (self.socket_path))
+      sys.exit(2)
 
   def close(self):
     self.socket.close()
@@ -150,6 +150,12 @@ class ZabbixPHPFPM():
       )
 
       parser.add_argument(
+        "--discover",
+        action = "store_true",
+        default = True,
+        help = "Discover pools",
+      )
+      parser.add_argument(
         "-V",
         "--verbose",
         action = "store_true",
@@ -239,7 +245,7 @@ class ZabbixPHPFPM():
     err = ''
 
     if not (os.path.exists(senderloc)) or not (os.access(senderloc, os.X_OK)):
-      logger.error("%s not exists or not executable" %(senderloc))
+      self.logger.error("%s not exists or not executable" %(senderloc))
       raise Exception("%s not exists or not executable" %(senderloc))
 
     else:
@@ -305,6 +311,26 @@ class ZabbixPHPFPM():
 
     return payload
 
+  def autodiscover(self):
+    data = {
+        'data': [],
+    }
+
+    try:
+      command = ['sh', '-c', 'ps ax |grep \'php-fpm: pool \' |grep -v grep|awk \'{print $NF}\' |sort -u']
+      p = Popen(command, stdout=PIPE, stdin=PIPE, stderr=PIPE)
+      out, err = p.communicate()
+      ret = p.wait()
+      for value in out.strip('\n').splitlines(True):
+        data.get('data').append({
+            "{#POOLNAME}": value,
+        })
+
+    except Exception as e:
+      print(e)
+
+    return data
+
   def run(self):
     if self.opts.verbose:
       log_handler = logging.StreamHandler(sys.stderr)
@@ -318,27 +344,32 @@ class ZabbixPHPFPM():
 
     self.logger.addHandler(log_handler)
 
-    try:
-      for s in self.opts.socket:
-        fcgi_client = FCGIStatusClient(
-          socket_path = s,
-          status_path = self.opts.status_path,
-        )
-        fcgi_client.make_request()
-        status = fcgi_client.get_status()
-        payload = self.get_payload(status)
+    if self.opts.discover:
+      data = self.autodiscover()
+      print(json.dumps(data))
 
-        self.zabbix_sender(
-          payload=payload,
-          zabbixserver=self.opts.zabbixserver,
-          zabbixport=self.opts.zabbixport,
-          senderloc=self.opts.senderloc,
-          agentconfig=self.opts.agentconfig,
-        )
+    else:
+      try:
+        for s in self.opts.socket:
+          fcgi_client = FCGIStatusClient(
+            socket_path = s,
+            status_path = self.opts.status_path,
+          )
+          fcgi_client.make_request()
+          status = fcgi_client.get_status()
+          payload = self.get_payload(status)
 
-    except Exception as e:
-      self.logger.error(e)
-      sys.exit(2)
+          self.zabbix_sender(
+            payload=payload,
+            zabbixserver=self.opts.zabbixserver,
+            zabbixport=self.opts.zabbixport,
+            senderloc=self.opts.senderloc,
+            agentconfig=self.opts.agentconfig,
+          )
+
+      except Exception as e:
+        self.logger.error(e)
+        sys.exit(2)
 
 if __name__ == '__main__':
   app = ZabbixPHPFPM()
