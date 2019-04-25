@@ -20,7 +20,9 @@ class FCGIStatusClient():
   # FCGI header length
   FCGI_HEADER_LENGTH = 8
 
-  def __init__(self, socket_path = "unix:///run/php/php7.0-fpm.sock", socket_timeout = 5.0, status_path = "/fpm-status" ):
+  def __init__(self, logger = None, socket_path = "unix:///run/php/php7.0-fpm.sock", socket_timeout = 5.0, status_path = "/fpm-status" ):
+    self.logger = logger
+
     if socket_path.startswith('tcp://'):
       self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     elif socket_path.startswith('unix://'):
@@ -34,11 +36,11 @@ class FCGIStatusClient():
     self.request_id = 1
 
     self.params = {
-        "SCRIPT_NAME": status_path,
-        "SCRIPT_FILENAME": status_path,
-        "QUERY_STRING": "json",
-        "REQUEST_METHOD": "GET",
-        }
+      "SCRIPT_NAME": status_path,
+      "SCRIPT_FILENAME": status_path,
+      "QUERY_STRING": "json",
+      "REQUEST_METHOD": "GET",
+    }
 
   def set_socket_timeout(self, timeout):
     self.socket_timeout = timeout
@@ -54,7 +56,7 @@ class FCGIStatusClient():
       else:
         sys.exit(1)
     except Exception as e:
-      print("Can not connect to socket: %s" % (self.socket_path))
+      self.logger.error("Can not connect to socket: %s" % (self.socket_path))
       sys.exit(2)
 
   def close(self):
@@ -98,6 +100,7 @@ class FCGIStatusClient():
     except:
       self.logger.error(sys.exc_info()[1])
       sys.exit(2)
+
     self.status_data = self.raw_status_data.decode().split("\r\n\r\n")[1]
 
   def make_request(self):
@@ -341,7 +344,7 @@ class ZabbixPHPFPM():
         })
 
     except Exception as e:
-      print(e)
+      self.logger.error(e)
 
     return data
 
@@ -366,6 +369,7 @@ class ZabbixPHPFPM():
       try:
         for s in self.opts.socket:
           fcgi_client = FCGIStatusClient(
+            logger = self.logger,
             socket_path = s,
             status_path = self.opts.status_path,
           )
