@@ -22,15 +22,13 @@ class FCGIStatusClient():
   # FCGI header length
   FCGI_HEADER_LENGTH = 8
 
-  def __init__(self, logger = None, socket_path = "unix:///run/php/php7.0-fpm.sock", socket_timeout = 5.0, status_path = "/fpm-status" ):
+  def __init__(self, logger = None, socket_path = "/run/php/php7.0-fpm.sock", socket_timeout = 5.0, status_path = "/fpm-status" ):
     self.logger = logger
 
-    if socket_path.startswith('tcp://'):
-      self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    elif socket_path.startswith('unix://'):
+    if os.path.exists(socket_path):
       self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     else:
-      raise Exception('Unknown socket address: %s' % socket_path)
+      self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     self.socket_path = socket_path
     self.status_path = status_path
@@ -40,7 +38,7 @@ class FCGIStatusClient():
     self.params = {
       "SCRIPT_NAME": status_path,
       "SCRIPT_FILENAME": status_path,
-      "QUERY_STRING": "json",
+      "QUERY_STRING": "json&full",
       "REQUEST_METHOD": "GET",
     }
 
@@ -50,13 +48,12 @@ class FCGIStatusClient():
 
   def connect(self):
     try:
-      if self.socket_path.startswith('tcp://'):
-        host, _, port = self.socket_path[len('tcp://'):].partition(':')
-        self.socket.connect((host, int(port)))
-      elif self.socket_path.startswith('unix://'):
-        self.socket.connect(self.socket_path[len('unix://'):])
+      if os.path.exists(self.socket_path):
+        self.socket.connect(self.socket_path)
       else:
-        sys.exit(1)
+        host, _, port = self.socket_path.partition(':')
+        self.socket.connect((host, int(port)))
+
     except Exception as e:
       self.logger.error("Can not connect to socket: %s" % (self.socket_path))
       sys.exit(2)
@@ -142,8 +139,11 @@ class ZabbixPHPFPM():
   _opts = None
 
   searchable_paths = [
-    '/etc/php*/fpm/php-fpm.d/*.conf',
-    '/etc/php5.6/fpm/pool.d/*.conf',
+    # support for opensuse dev
+    '/etc/php7/fpm/php-fpm.d/*.conf', 
+
+    # debian based php fpm configs
+    '/etc/php5/fpm/pool.d/*.conf',
     '/etc/php/*/fpm/pool.d/*.conf',
   ]
 
@@ -342,23 +342,25 @@ class ZabbixPHPFPM():
     }
 
     for s in self.searchable_paths:
-      config = ConfigParser.SafeConfigParser(allow_no_value=True)
-
       configs = glob.glob(s)
 
-      for c in configs:
-        config.read(c)
+      for conf in configs:
+        config = ConfigParser.SafeConfigParser(allow_no_value=True)
+        config.read(conf)
 
-      for section in config.sections():
-        try:
-          status_path = config.get(section, 'pm.status_path')
+        print(os.path.dirname(conf))
 
-          data.get('data').append({
-              "{#POOLNAME}": section,
-              "{#SOCKET}": config.get(section, 'listen'),
-          })
-        except ConfigParser.NoOptionError as e:
-          continue
+        for section in config.sections():
+          listen = config.get(section, 'listen')
+
+          try:
+            if config.has_option(section, 'pm.status_path'):
+              data.get('data').append({
+                  "{#POOLNAME}": section,
+                  "{#SOCKET}": config.get(section, 'listen'),
+              })
+          except ConfigParser.NoOptionError as e:
+            continue
 
     return data
 
