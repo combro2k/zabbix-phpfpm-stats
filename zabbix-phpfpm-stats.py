@@ -1,7 +1,9 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
-import sys, socket, struct, stat, os
+import sys, socket, struct, stat, os, json
+import logging, logging.handlers
 
+from subprocess import Popen, PIPE
 from argparse import ArgumentParser as Parser
 
 class FCGIStatusClient():
@@ -18,19 +20,25 @@ class FCGIStatusClient():
   # FCGI header length
   FCGI_HEADER_LENGTH = 8
 
-  def __init__(self, socket_path = "/var/run/php/php7.0-fpm.sock", socket_timeout = 5.0, status_path = "/status" ):
-    self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+  def __init__(self, socket_path = "unix:///run/php/php7.0-fpm.sock", socket_timeout = 5.0, status_path = "/fpm-status" ):
+    if socket_path.startswith('tcp://'):
+      self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    elif socket_path.startswith('unix://'):
+      self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    else:
+      raise Exception('Unknown socket address: %s' % socket_path)
+
     self.socket_path = socket_path
-    self.set_socket_timeout(socket_timeout)
     self.status_path = status_path
+    self.set_socket_timeout(socket_timeout)
     self.request_id = 1
 
     self.params = {
-      "SCRIPT_NAME": status_path,
-      "SCRIPT_FILENAME": status_path,
-      "QUERY_STRING": "",
-      "REQUEST_METHOD": "GET",
-    }
+        "SCRIPT_NAME": status_path,
+        "SCRIPT_FILENAME": status_path,
+        "QUERY_STRING": "json",
+        "REQUEST_METHOD": "GET",
+        }
 
   def set_socket_timeout(self, timeout):
     self.socket_timeout = timeout
@@ -38,9 +46,15 @@ class FCGIStatusClient():
 
   def connect(self):
     try:
-      self.socket.connect(self.socket_path)
+      if self.socket_path.startswith('tcp://'):
+        host, _, port = self.socket_path[len('tcp://'):].partition(':')
+        self.socket.connect((host, int(port)))
+      elif self.socket_path.startswith('unix://'):
+        self.socket.connect(self.socket_path[len('unix://'):])
+      else:
+        sys.exit(1)
     except:
-      print(sys.exc_info()[1])
+      self.logger.error(sys.exc_info()[1])
       sys.exit(1)
 
   def close(self):
@@ -78,11 +92,11 @@ class FCGIStatusClient():
       else:
         self.raw_status_data = ""
         if request_type == 7:
-          raise Exception("Received an error packet.")
+          raise Exception("Received an error packet. (%s does not exist)" % self.status_path)
         else:
           raise Exception("Received unexpected packet type.")
     except:
-      print(sys.exc_info()[1])
+      self.logger.error(sys.exc_info()[1])
       sys.exit(2)
     self.status_data = self.raw_status_data.decode().split("\r\n\r\n")[1]
 
@@ -94,44 +108,248 @@ class FCGIStatusClient():
     self.close()
 
   def print_status(self):
-    print(self.status_data)
+    print(json.dumps(self.status_data))    
 
+  def get_status(self):
+    dstatus = json.loads(self.status_data)
 
-def main(argv):
-    parser = Parser(
-            version = "%(prog)s version v0.3",
-            prog = os.path.basename(__file__),
-            description = """This program gathers data from PHP-FPM's
+    status = {
+      'active_processes': dstatus.get('active processes'),
+      'accepted_conn': dstatus.get('accepted conn'),
+      'process_manager': dstatus.get('process manager'),
+      'listen_queue': dstatus.get('listen queue'),
+      'start_since': dstatus.get('start since'),
+#      'idle_processes': dstatus.get('idle processes'),
+      'start_time': dstatus.get('start time'),
+      'slow_requests': dstatus.get('slow requests'),
+      'max_active_processes': dstatus.get('max active processes'),
+      'max_children_reached': dstatus.get('max children reached'),
+      'max_listen_queue': dstatus.get('max listen queue'),
+      'total_processes': dstatus.get('total processes'),
+      'listen_queue_len': dstatus.get('listen queue len'),
+      'pool': dstatus.get('pool'),
+    }
+
+    return status
+
+class ZabbixPHPFPM():
+
+  _opts = None
+
+  @property
+  def opts(self):
+    if self._opts is None:
+      parser = Parser(
+        version = "%(prog)s version v0.3",
+        prog = os.path.basename(__file__),
+        description = """This program gathers data from PHP-FPM's
             built-in status page and sends it to
             Zabbix. The data is sent via zabbix_sender.
             License: GPLv2
         """,
+      )
+
+      parser.add_argument(
+        "-V",
+        "--verbose",
+        action = "store_true",
+        dest = "verbose",
+        default = False,
+        help = "output verbosity",
+      )
+
+      parser.add_argument(
+        "-D",
+        "--debug",
+        action = "store_true",
+        dest = "debug",
+        default = False,
+        help = "print debug information. (default: %(default)s)",
+      )
+
+      parser.add_argument(
+        "-s",
+        "--sender",
+        action = "store",
+        dest = "senderloc",
+        default = "/usr/bin/zabbix_sender",
+        help = "location to the zabbix_sender executable. (default: %(default)s)",
+      )
+
+      parser.add_argument(
+        "-z",
+        "--zabbixserver",
+        action = "store",
+        dest = "zabbixserver",
+        default = "localhost",
+        help = "zabbix trapper hostname",
+      )
+      parser.add_argument(
+        "-q",
+        "--zabbixport",
+        action = "store",
+        type = int,
+        dest = "zabbixport",
+        default = 10051,
+        help = "zabbix port to connect to. (default: %(default)s)",
+      )
+      parser.add_argument(
+        "-c",
+        "--zabbixsource",
+        action = "store",
+        dest = "zabbixsource",
+        default = "localhost",
+        help = "zabbix host to use when sending values. (default: %(default)s)",
+      )
+
+      parser.add_argument(
+        "--config",
+        action = "store",
+        dest = "agentconfig",
+        default = None,
+        help = "zabbix agent config to derive Hostname and ServerActive from. (default: %(default)s)",
+      )
+
+      parser.add_argument(
+        "-S",
+        "--socket",
+        action = "append",
+        dest = "socket",
+        default = None,
+        help = "Use socket (unix://, tcp://) (default: unix:///run/php/php7.0-fpm.sock",
+      )
+
+      parser.add_argument(
+        "-P",
+        "--path",
+        action = "store",
+        dest = "status_path",
+        default = '/fpm-status',
+        help = "Status path (default: %(default)s)",
+      )
+
+      self._opts = parser.parse_args()
+
+      if self._opts.socket is None:
+        self._opts.socket = ['unix:///run/php/php7.0-fpm.sock']
+
+    return self._opts
+
+  def zabbix_sender(self, payload, agentconfig = None, zabbixserver = None, zabbixport = 10051, senderloc = '/usr/bin/zabbix_sender' ):
+    sender_command = []
+    result = 0
+    err = ''
+
+    if not (os.path.exists(senderloc)) or not (os.access(senderloc, os.X_OK)):
+      logger.error("%s not exists or not executable" %(senderloc))
+      raise Exception("%s not exists or not executable" %(senderloc))
+
+    else:
+      if agentconfig is not None:
+        self.logger.debug('sending to server in agent config %s' % agentconfig)
+        sender_command = [ senderloc, '-vv', '--config', agentconfig, '--input-file', '-' ]
+      else:
+        if zabbixserver is not None:
+          self.logger.debug('sending to server %s:%s' % (zabbixserver, zabbixport))
+          sender_command = [ senderloc, '-vv', '--zabbix-server', zabbixserver, '--port', str(zabbixport), '--input-file', '-' ]
+        else:
+          self.logger.error('must specify agent configuration or server name to call zabbix_sender with')
+
+      try:
+        self.logger.debug(sender_command)
+
+        p = Popen(sender_command, stdout = PIPE, stdin = PIPE, stderr = PIPE)
+        out, err = p.communicate(input=payload)
+        ret = p.wait()
+        result = 1
+      except Exception, e:
+        err = "%s\nFailed to execute: '%s'" % (e, " ".join(sender_command))
+      finally:
+        if ret != 0:
+          raise Exception("error returned from %s! ret: %d, out: '%s', err: '%s'" % (sender_command[0], ret, out.strip('\n'), err.strip('\n')))
+
+    return result
+
+  def setLogLevel(self, loglevel):
+    """
+        Setup logging.
+        """
+
+    numeric_loglevel = getattr(logging, loglevel.upper(), None)
+    if not isinstance(numeric_loglevel, int):
+      raise ValueError('Invalid log level: "%s"\n Try: "debug", "info", "warning", "critical".' % loglevel)
+
+    program = os.path.basename( __file__ )
+    logger = logging.getLogger( program )
+    logger.setLevel(numeric_loglevel)
+
+    return logger
+
+  def get_payload(self, status):
+    pool = status.get('pool')
+    payload = ''
+
+    if self.opts.agentconfig:
+      for item, value in status.items():
+        payload += "-\tphp-fpm.%s[%s]\t%s\n" % (
+          item,
+          pool,
+          value,
+        )
+    else:
+      for item, value in status.items():
+        payload += "%s php-fpm.%s[%s]] %s\n" % (
+          self.opts.zabbixsource,
+          item,
+          pool,
+          value,
         )
 
-    parser.add_argument(
-            "-s",
-            "--socket",
-            action = "store",
-            dest = "socket",
-            default = "/run/php/php7.0-fpm.sock",
-            help = "Use other socket. (default: %(default)s)",
-            )
 
-    opts = parser.parse_args()
+    return payload
+
+  def run(self):
+    if self.opts.verbose:
+      log_handler = logging.StreamHandler(sys.stderr)
+    else:
+      log_handler = logging.handlers.SysLogHandler('/dev/log')
+
+    self.logger = self.setLogLevel('info')
+
+    if self.opts.debug:
+      self.logger = self.setLogLevel('debug')
+
+    self.logger.addHandler(log_handler)
 
     try:
-        if not os.path.exists(opts.socket):
-            print('Socket does not exist: %s' % opts.socket)
-            sys.exit(1)
-
+      for s in self.opts.socket:
         fcgi_client = FCGIStatusClient(
-                socket_path = opts.socket,
-                status_path = "/fpm-status",
-                )
+          socket_path = s,
+          status_path = self.opts.status_path,
+        )
         fcgi_client.make_request()
-        fcgi_client.print_status()
+        status = fcgi_client.get_status()
+        payload = self.get_payload(status)
+
+        self.zabbix_sender(
+          payload=payload,
+          zabbixserver=self.opts.zabbixserver,
+          zabbixport=self.opts.zabbixport,
+          senderloc=self.opts.senderloc,
+          agentconfig=self.opts.agentconfig,
+        )
+
+        self.logger.debug("Got: %s\nSending: \n%s" % (
+          status,
+          payload,
+        ))
+
     except Exception as e:
-        print('Got error: %s' % e)
+      self.logger.error(e)
+      sys.exit(2)
 
 if __name__ == '__main__':
-    main(sys.argv)
+  app = ZabbixPHPFPM()
+  app.run()
+
+# vim: set expandtab tabstop=2 shiftwidth=2:
