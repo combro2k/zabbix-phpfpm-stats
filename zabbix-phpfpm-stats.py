@@ -321,7 +321,7 @@ class ZabbixPHPFPM():
       p = Popen(command, stdout=PIPE, stdin=PIPE, stderr=PIPE)
       out, err = p.communicate()
       ret = p.wait()
-      for value in out.strip('\n').splitlines(True):
+      for value in out.strip('\n').splitlines(False):
         data.get('data').append({
             "{#POOLNAME}": value,
         })
