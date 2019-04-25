@@ -108,7 +108,7 @@ class FCGIStatusClient():
     self.close()
 
   def print_status(self):
-    print(json.dumps(self.status_data))    
+    print(json.dumps(self.status_data))
 
   def get_status(self):
     dstatus = json.loads(self.status_data)
@@ -175,7 +175,6 @@ class ZabbixPHPFPM():
         default = "/usr/bin/zabbix_sender",
         help = "location to the zabbix_sender executable. (default: %(default)s)",
       )
-
       parser.add_argument(
         "-z",
         "--zabbixserver",
@@ -201,7 +200,6 @@ class ZabbixPHPFPM():
         default = "localhost",
         help = "zabbix host to use when sending values. (default: %(default)s)",
       )
-
       parser.add_argument(
         "--config",
         action = "store",
@@ -210,6 +208,7 @@ class ZabbixPHPFPM():
         help = "zabbix agent config to derive Hostname and ServerActive from. (default: %(default)s)",
       )
 
+      # PHP-FPM specific
       parser.add_argument(
         "-S",
         "--socket",
@@ -218,7 +217,6 @@ class ZabbixPHPFPM():
         default = None,
         help = "Use socket (unix://, tcp://) (default: unix:///run/php/php7.0-fpm.sock",
       )
-
       parser.add_argument(
         "-P",
         "--path",
@@ -256,7 +254,7 @@ class ZabbixPHPFPM():
           self.logger.error('must specify agent configuration or server name to call zabbix_sender with')
 
       try:
-        self.logger.debug(sender_command)
+        self.logger.debug('Payload:\n%s' % (payload))
 
         p = Popen(sender_command, stdout = PIPE, stdin = PIPE, stderr = PIPE)
         out, err = p.communicate(input=payload)
@@ -298,13 +296,12 @@ class ZabbixPHPFPM():
         )
     else:
       for item, value in status.items():
-        payload += "%s php-fpm.%s[%s]] %s\n" % (
+        payload += "%s php-fpm.%s[%s] %s\n" % (
           self.opts.zabbixsource,
           item,
           pool,
           value,
         )
-
 
     return payload
 
@@ -338,11 +335,6 @@ class ZabbixPHPFPM():
           senderloc=self.opts.senderloc,
           agentconfig=self.opts.agentconfig,
         )
-
-        self.logger.debug("Got: %s\nSending: \n%s" % (
-          status,
-          payload,
-        ))
 
     except Exception as e:
       self.logger.error(e)
