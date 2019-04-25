@@ -144,7 +144,7 @@ class ZabbixPHPFPM():
   searchable_paths = [
     '/etc/php*/fpm/php-fpm.d/*.conf',
     '/etc/php5.6/fpm/pool.d/*.conf',
-    '/etc/php/*/fpm/pool/*.conf',
+    '/etc/php/*/fpm/pool.d/*.conf',
   ]
 
   @property
