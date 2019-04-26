@@ -1,6 +1,6 @@
 #!/usr/bin/env python2
 
-import sys, socket, struct, stat, os, json, glob
+import sys, socket, struct, stat, os, json, glob, re
 import logging, logging.handlers
 
 import ConfigParser
@@ -121,7 +121,7 @@ class FCGIStatusClient():
       'process_manager': dstatus.get('process manager'),
       'listen_queue': dstatus.get('listen queue'),
       'start_since': dstatus.get('start since'),
-#      'idle_processes': dstatus.get('idle processes'),
+      'idle_processes': dstatus.get('idle processes'),
       'start_time': dstatus.get('start time'),
       'slow_requests': dstatus.get('slow requests'),
       'max_active_processes': dstatus.get('max active processes'),
@@ -238,10 +238,18 @@ class ZabbixPHPFPM():
       parser.add_argument(
         "-S",
         "--socket",
-        action = "append",
-        dest = "socket",
-        default = None,
-        help = "Use socket (unix://, tcp://) (default: unix:///run/php/php7.0-fpm.sock",
+        action = "store",
+        dest = "socket_path",
+        default = '/run/php/php7.0-fpm.sock',
+        help = "Use socket (file or ip:port) (default: %(default)s)",
+      )
+      parser.add_argument(
+        "-p",
+        "--php",
+        action = "store",
+        dest = "phpversion",
+        default = '7.0',
+        help = "Specify PHP version (can't autodetect unfortunately) (default: %(default)s)",
       )
       parser.add_argument(
         "-P",
@@ -253,9 +261,6 @@ class ZabbixPHPFPM():
       )
 
       self._opts = parser.parse_args()
-
-      if self._opts.socket is None:
-        self._opts.socket = ['unix:///run/php/php7.0-fpm.sock']
 
     return self._opts
 
@@ -318,11 +323,13 @@ class ZabbixPHPFPM():
     pool = status.get('pool')
     payload = ''
 
+    version = os.path.basename(self.opts.socket_path).rstrip('-fpm.sock')
+
     if self.opts.agentconfig:
       for item, value in status.items():
         payload += "-\tphp-fpm.%s[%s]\t%s\n" % (
           item,
-          pool,
+          '%s-%s' % (pool, version),
           value,
         )
     else:
@@ -330,7 +337,7 @@ class ZabbixPHPFPM():
         payload += "%s php-fpm.%s[%s] %s\n" % (
           self.opts.zabbixsource,
           item,
-          pool,
+          '%s-%s' % (pool, version),
           value,
         )
 
@@ -348,16 +355,15 @@ class ZabbixPHPFPM():
         config = ConfigParser.SafeConfigParser(allow_no_value=True)
         config.read(conf)
 
-        print(os.path.dirname(conf))
-
         for section in config.sections():
-          listen = config.get(section, 'listen')
-
           try:
+            listen = config.get(section, 'listen')
+            version = os.path.basename(listen).rstrip('-fpm.sock')
+
             if config.has_option(section, 'pm.status_path'):
               data.get('data').append({
-                  "{#POOLNAME}": section,
-                  "{#SOCKET}": config.get(section, 'listen'),
+                  "{#POOLNAME}": "%s-%s" % (section, version),
+                  "{#SOCKET}": listen,
               })
           except ConfigParser.NoOptionError as e:
             continue
@@ -381,28 +387,25 @@ class ZabbixPHPFPM():
       data = self.autodiscover()
       print(json.dumps(data))
 
-      #data = self.autodiscover()
-      #print(json.dumps(data))
-
     else:
       try:
-        for s in self.opts.socket:
-          fcgi_client = FCGIStatusClient(
-            logger = self.logger,
-            socket_path = s,
-            status_path = self.opts.status_path,
-          )
-          fcgi_client.make_request()
-          status = fcgi_client.get_status()
-          payload = self.get_payload(status)
+        fcgi_client = FCGIStatusClient(
+          logger=self.logger,
+          socket_path=self.opts.socket_path,
+          status_path=self.opts.status_path,
+        )
 
-          self.zabbix_sender(
-            payload=payload,
-            zabbixserver=self.opts.zabbixserver,
-            zabbixport=self.opts.zabbixport,
-            senderloc=self.opts.senderloc,
-            agentconfig=self.opts.agentconfig,
-          )
+        fcgi_client.make_request()
+        status = fcgi_client.get_status()
+        payload = self.get_payload(status)
+
+        self.zabbix_sender(
+          payload=payload,
+          zabbixserver=self.opts.zabbixserver,
+          zabbixport=self.opts.zabbixport,
+          senderloc=self.opts.senderloc,
+          agentconfig=self.opts.agentconfig,
+        )
 
       except Exception as e:
         self.logger.error(e)
