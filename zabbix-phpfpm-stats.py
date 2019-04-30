@@ -244,14 +244,6 @@ class ZabbixPHPFPM():
         help = "Use socket (file or ip:port) (default: %(default)s)",
       )
       parser.add_argument(
-        "-p",
-        "--poolname",
-        action = "store",
-        dest = "poolname",
-        default = None,
-        help = "Specify PHP version (can't autodetect unfortunately) (default: %(default)s)",
-      )
-      parser.add_argument(
         "-P",
         "--path",
         action = "store",
