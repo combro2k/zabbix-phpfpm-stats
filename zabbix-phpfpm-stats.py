@@ -233,6 +233,14 @@ class ZabbixPHPFPM():
         default = None,
         help = "zabbix agent config to derive Hostname and ServerActive from. (default: %(default)s)",
       )
+      parser.add_argument(
+        "-k",
+        "--keyname",
+        action = "store",
+        dest = "zabbix_key",
+        default = None,
+        help = "Use zabbix key name (default: %(default)s)",
+      )
 
       # PHP-FPM specific
       parser.add_argument(
@@ -315,13 +323,13 @@ class ZabbixPHPFPM():
     pool = status.get('pool')
     payload = ''
 
-    version = self._get_zabbix_suffix_key(self.opts.socket_path)
+    keyname = self.opts.zabbix_key if self.opts.zabbix_key is not None else 'global'
 
     if self.opts.agentconfig:
       for item, value in status.items():
         payload += "-\tphp-fpm.%s[%s]\t%s\n" % (
           item,
-          '%s-%s' % (pool, version),
+          keyname,
           value,
         )
     else:
@@ -329,7 +337,7 @@ class ZabbixPHPFPM():
         payload += "%s php-fpm.%s[%s] %s\n" % (
           self.opts.zabbixsource,
           item,
-          '%s-%s' % (pool, version),
+          keyname,
           value,
         )
 
