@@ -245,10 +245,10 @@ class ZabbixPHPFPM():
       )
       parser.add_argument(
         "-p",
-        "--php",
+        "--poolname",
         action = "store",
-        dest = "phpversion",
-        default = '7.0',
+        dest = "poolname",
+        default = None,
         help = "Specify PHP version (can't autodetect unfortunately) (default: %(default)s)",
       )
       parser.add_argument(
@@ -323,7 +323,7 @@ class ZabbixPHPFPM():
     pool = status.get('pool')
     payload = ''
 
-    version = os.path.basename(self.opts.socket_path).rstrip('-fpm.sock')
+    version = self._get_zabbix_suffix_key(self.opts.socket_path)
 
     if self.opts.agentconfig:
       for item, value in status.items():
@@ -343,6 +343,16 @@ class ZabbixPHPFPM():
 
     return payload
 
+  def _get_zabbix_suffix_key(self, listen):
+    if os.path.exists(listen):
+      x = re.match(r'/run/php/(?P<version>\S+)-(?P<pool>\w+)-fpm.sock', listen)
+      keyname = x.group('version') if x else ''
+    else:
+      x = re.match(r'(?P<host>[^:]+):(?P<port>\d+)$', listen)
+      keyname = '%s-%s' % (x.group('host'), x.group('port')) if x else ''
+
+    return keyname
+
   def autodiscover(self):
     data = {
       'data': [],
@@ -360,14 +370,8 @@ class ZabbixPHPFPM():
           listen = config.get(section, 'listen')
 
           if config.has_option(section, 'pm.status_path'):
-            if os.path.exists(listen):
-              x = re.match(r'/run/php/(?P<version>\S+)-(?P<pool>\w+)-fpm.sock', listen)
-              version = x.group('version') if x else ''
-            else:
-              version = ''
-              x = re.match(r'(?P<host>[^:]+):(?P<port>\d+)$', listen)
-              version = '%s-%s' % (x.group('host'), x.group('port')) if x else ''
-
+            version = self._get_zabbix_suffix_key(listen)
+    
             data.get('data').append({
                 "{#POOLNAME}": "%s-%s" % (section, version) 
                   if version != '' else section,
