@@ -368,6 +368,8 @@ class ZabbixPHPFPM():
           except ConfigParser.NoOptionError as e:
             continue
 
+    self.logger.debug('Discovered: %s' % (data))
+
     return data
 
   def run(self):
