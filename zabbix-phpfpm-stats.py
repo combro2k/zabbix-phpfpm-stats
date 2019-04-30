@@ -350,23 +350,31 @@ class ZabbixPHPFPM():
 
     for s in self.searchable_paths:
       configs = glob.glob(s)
-
+    
+      config = ConfigParser.SafeConfigParser(allow_no_value=True)
       for conf in configs:
-        config = ConfigParser.SafeConfigParser(allow_no_value=True)
         config.read(conf)
 
-        for section in config.sections():
-          try:
-            listen = config.get(section, 'listen')
-            version = os.path.basename(listen).rstrip('-fpm.sock')
+      for section in config.sections():
+        try:
+          listen = config.get(section, 'listen')
 
-            if config.has_option(section, 'pm.status_path'):
-              data.get('data').append({
-                  "{#POOLNAME}": "%s-%s" % (section, version),
-                  "{#SOCKET}": listen,
-              })
-          except ConfigParser.NoOptionError as e:
-            continue
+          if config.has_option(section, 'pm.status_path'):
+            if os.path.exists(listen):
+              x = re.match(r'/run/php/(?P<version>\S+)-(?P<pool>\w+)-fpm.sock', listen)
+              version = x.group('version') if x else ''
+            else:
+              version = ''
+              x = re.match(r'(?P<host>[^:]+):(?P<port>\d+)$', listen)
+              version = '%s-%s' % (x.group('host'), x.group('port')) if x else ''
+
+            data.get('data').append({
+                "{#POOLNAME}": "%s-%s" % (section, version) 
+                  if version != '' else section,
+                "{#SOCKET}": listen,
+            })
+        except ConfigParser.NoOptionError as e:
+          continue
 
     self.logger.debug('Discovered: %s' % (data))
 
