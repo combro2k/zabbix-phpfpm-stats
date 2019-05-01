@@ -370,11 +370,11 @@ class ZabbixPHPFPM():
           listen = config.get(section, 'listen')
 
           if config.has_option(section, 'pm.status_path'):
-            version = self._get_zabbix_suffix_key(listen)
+            suffix = self._get_zabbix_suffix_key(listen)
     
             data.get('data').append({
-                "{#POOLNAME}": "%s-%s" % (section, version) 
-                  if version != '' else section,
+                "{#POOLNAME}": "%s-%s" % (section, suffix)
+                  if suffix != '' else section,
                 "{#SOCKET}": listen,
             })
         except ConfigParser.NoOptionError as e:
@@ -413,7 +413,7 @@ class ZabbixPHPFPM():
         status = fcgi_client.get_status()
         payload = self.get_payload(status)
 
-        self.zabbix_sender(
+        ret = self.zabbix_sender(
           payload=payload,
           zabbixserver=self.opts.zabbixserver,
           zabbixport=self.opts.zabbixport,
@@ -421,8 +421,13 @@ class ZabbixPHPFPM():
           agentconfig=self.opts.agentconfig,
         )
 
+        print(ret)
+
       except Exception as e:
         self.logger.error(e)
+
+        print(2)
+
         sys.exit(2)
 
 if __name__ == '__main__':
