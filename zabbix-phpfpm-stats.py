@@ -8,6 +8,13 @@ import ConfigParser
 from subprocess import Popen, PIPE
 from argparse import ArgumentParser as Parser
 
+"""
+ @original-author Milosz Galazka
+ @author Martijn van Maurik
+ @ref-url https://blog.sleeplessbeastie.eu/2019/04/01/how-to-display-php-fpm-pool-information-using-unix-socket-and-python-script/
+
+ Changed some extra socket_path detection to allow either inet or unix sockets.
+"""
 class FCGIStatusClient():
   # FCGI protocol version
   FCGI_VERSION = 1
@@ -134,10 +141,13 @@ class FCGIStatusClient():
 
     return status
 
+"""
+ @author Martijn van Maurik
+ 
+ Zabbix class wrapper to send the data to traps in Zabbix
+"""
 class ZabbixPHPFPM():
-
   _opts = None
-
   searchable_paths = [
     # support for opensuse dev
     '/etc/php7/fpm/php-fpm.d/*.conf', 
@@ -167,7 +177,6 @@ class ZabbixPHPFPM():
         default = False,
         help = "Do not send data to zabbix"
       )
-
       parser.add_argument(
         "--discover",
         action = "store_true",
@@ -181,25 +190,23 @@ class ZabbixPHPFPM():
         action = "store_true",
         dest = "verbose",
         default = False,
-        help = "output verbosity",
+        help = "Set output to stdout (default: %(default)s)",
       )
-
       parser.add_argument(
         "-D",
         "--debug",
         action = "store_true",
         dest = "debug",
         default = False,
-        help = "print debug information. (default: %(default)s)",
+        help = "Print debug information. (default: %(default)s)",
       )
-
       parser.add_argument(
         "-s",
         "--sender",
         action = "store",
         dest = "senderloc",
         default = "/usr/bin/zabbix_sender",
-        help = "location to the zabbix_sender executable. (default: %(default)s)",
+        help = "Location to the zabbix_sender executable. (default: %(default)s)",
       )
       parser.add_argument(
         "-z",
@@ -207,7 +214,7 @@ class ZabbixPHPFPM():
         action = "store",
         dest = "zabbixserver",
         default = "localhost",
-        help = "zabbix trapper hostname",
+        help = "Zabbix trapper hostname (default: %(default)s)",
       )
       parser.add_argument(
         "-q",
@@ -216,7 +223,7 @@ class ZabbixPHPFPM():
         type = int,
         dest = "zabbixport",
         default = 10051,
-        help = "zabbix port to connect to. (default: %(default)s)",
+        help = "Zabbix trapper port to connect to. (default: %(default)s)",
       )
       parser.add_argument(
         "-c",
@@ -224,7 +231,7 @@ class ZabbixPHPFPM():
         action = "store",
         dest = "zabbixsource",
         default = "localhost",
-        help = "zabbix host to use when sending values. (default: %(default)s)",
+        help = "Zabbix host to use when sending values. (default: %(default)s)",
       )
       parser.add_argument(
         "--config",
@@ -235,11 +242,11 @@ class ZabbixPHPFPM():
       )
       parser.add_argument(
         "-k",
-        "--keyname",
+        "--key",
         action = "store",
         dest = "zabbix_key",
         default = None,
-        help = "Use zabbix key name (default: %(default)s)",
+        help = "Use Zabbix pool key name (default: %(default)s)",
       )
 
       # PHP-FPM specific
@@ -249,7 +256,7 @@ class ZabbixPHPFPM():
         action = "store",
         dest = "socket_path",
         default = '/run/php/php7.0-fpm.sock',
-        help = "Use socket (file or ip:port) (default: %(default)s)",
+        help = "PHP-FPM: use socket (/run/php/file.sock or ip:port) (default: %(default)s)",
       )
       parser.add_argument(
         "-P",
@@ -257,7 +264,7 @@ class ZabbixPHPFPM():
         action = "store",
         dest = "status_path",
         default = '/fpm-status',
-        help = "Status path (default: %(default)s)",
+        help = "PHP-FPM: status path (default: %(default)s)",
       )
 
       self._opts = parser.parse_args()
@@ -322,14 +329,17 @@ class ZabbixPHPFPM():
   def get_payload(self, status):
     pool = status.get('pool')
     payload = ''
-
-    keyname = self.opts.zabbix_key if self.opts.zabbix_key is not None else 'global'
+    zabbix_key = self.opts.zabbix_key if self.opts.zabbix_key else \
+      '%s-%s' % (
+        pool,
+        self._get_zabbix_suffix_key(self.opts.socket_path),
+      )
 
     if self.opts.agentconfig:
       for item, value in status.items():
         payload += "-\tphp-fpm.%s[%s]\t%s\n" % (
           item,
-          keyname,
+          zabbix_key,
           value,
         )
     else:
@@ -337,21 +347,22 @@ class ZabbixPHPFPM():
         payload += "%s php-fpm.%s[%s] %s\n" % (
           self.opts.zabbixsource,
           item,
-          keyname,
+          zabbix_key,
           value,
         )
 
     return payload
 
   def _get_zabbix_suffix_key(self, listen):
+    suffix = ''
     if os.path.exists(listen):
       x = re.match(r'/run/php/(?P<version>\S+)-(?P<pool>\w+)-fpm.sock', listen)
-      keyname = x.group('version') if x else ''
+      suffix = x.group('version') if x else ''
     else:
       x = re.match(r'(?P<host>[^:]+):(?P<port>\d+)$', listen)
-      keyname = '%s-%s' % (x.group('host'), x.group('port')) if x else ''
+      suffix = '%s-%s' % (x.group('host'), x.group('port')) if x else ''
 
-    return keyname
+    return suffix 
 
   def autodiscover(self):
     data = {
