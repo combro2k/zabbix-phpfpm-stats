@@ -56,13 +56,15 @@ class FCGIStatusClient():
   def connect(self):
     try:
       if os.path.exists(self.socket_path):
+        if not os.access(self.socket_path, os.W_OK):
+          raise Exception('no read and/or write access to %s' % (self.socket_path))
         self.socket.connect(self.socket_path)
       else:
         host, _, port = self.socket_path.partition(':')
         self.socket.connect((host, int(port)))
 
     except Exception as e:
-      self.logger.error("Can not connect to socket: %s" % (self.socket_path))
+      self.logger.error("Can not connect to socket: %s" % (e))
       sys.exit(2)
 
   def close(self):
@@ -381,15 +383,41 @@ class ZabbixPHPFPM():
           listen = config.get(section, 'listen')
 
           if config.has_option(section, 'pm.status_path'):
+            if re.match(r'/run/php/(?P<version>\S+)-(?P<pool>\w+)-fpm.sock', listen):
+              if not os.path.exists(listen):
+                raise Exception('The socket %s does not exist!' % (listen))
+              if not os.access(listen, os.W_OK):
+                  raise Exception('The user has no permission no to read and/or write %s' % (listen))
+            else:
+              x=re.match(r'(?P<host>[^:]+):(?P<port>\d+)$', listen)
+              sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+              result = sock.connect_ex((
+                x.group('host'), 
+                int(x.group('port')),
+              ))
+              sock.close()
+              if result != 0:
+                raise Exception('Can not connect to %s:%s' % (
+                  x.group('host'),
+                  x.group('port'),
+                ))
+
             suffix = self._get_zabbix_suffix_key(listen)
-    
             data.get('data').append({
                 "{#POOLNAME}": "%s-%s" % (section, suffix)
                   if suffix != '' else section,
                 "{#SOCKET}": listen,
             })
+
+        except Exception as e:
+          self.logger.error(e)
+
+          continue
+
         except ConfigParser.NoOptionError as e:
           continue
+
+        self.logger.debug('Added POOLNAME: %s-%s' % (section, suffix))
 
     self.logger.debug('Discovered: %s' % (data))
 
