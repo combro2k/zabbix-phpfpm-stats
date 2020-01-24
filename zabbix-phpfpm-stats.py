@@ -338,6 +338,8 @@ class ZabbixPHPFPM:
                             "{#POOLNAME}": "%s-%s" % (section, suffix) if suffix != '' else section,
                             "{#SOCKET}":   listen,
                         })
+                    else:
+                      continue
 
                 except Exception as e:
                     self.logger.error(e)
@@ -347,7 +349,8 @@ class ZabbixPHPFPM:
                 except ConfigParser.NoOptionError as e:
                     continue
 
-                self.logger.debug('Added POOLNAME: %s-%s' % (section, suffix))
+                if suffix:
+                    self.logger.debug('Added POOLNAME: %s-%s' % (section, suffix))
 
         self.logger.debug('Discovered: %s' % (data))
 
